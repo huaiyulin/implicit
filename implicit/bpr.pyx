@@ -119,7 +119,7 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
 
     @cython.cdivision(True)
     @cython.boundscheck(False)
-    def fit(self, item_users, show_progress=True):
+    def fit(self, item_users, neg_samples=None, show_progress=True):
         """ Factorizes the item_users matrix
 
         Parameters
@@ -185,10 +185,19 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
         log.debug("Running %i BPR training epochs", self.iterations)
         with tqdm(total=self.iterations, disable=not show_progress) as progress:
             for epoch in range(self.iterations):
-                correct, skipped = bpr_update(rng, userids, user_items.indices, user_items.indptr,
-                                              self.user_factors, self.item_factors,
-                                              self.learning_rate, self.regularization, num_threads,
-                                              self.verify_negative_samples)
+                if neg_samples == None:
+                    correct, skipped = bpr_update(rng, userids,
+                                                  user_items.indices, user_items.indptr,
+                                                  self.user_factors, self.item_factors,
+                                                  self.learning_rate, self.regularization,
+                                                  num_threads, self.verify_negative_samples)
+                else:
+                    correct, skipped = bpr_update_neg(rng, userids,
+                                                      user_items.indices, user_items.indptr,
+                                                      self.user_factors, self.item_factors,
+                                                      self.learning_rate, self.regularization,
+                                                      num_threads, self.verify_negative_samples,
+                                                      neg_samples.indices, neg_samples.indptr)
                 progress.update(1)
                 total = len(user_items.data)
                 progress.set_postfix({"correct": "%.2f%%" % (100.0 * correct / (total - skipped)),
@@ -231,6 +240,64 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
 @cython.cdivision(True)
 @cython.boundscheck(False)
 def bpr_update(RNGVector rng,
+               integral[:] userids, integral[:] itemids, integral[:] indptr,
+               floating[:, :] X, floating[:, :] Y,
+               float learning_rate, float reg, int num_threads,
+               bool verify_neg):
+    cdef integral users = X.shape[0], items = Y.shape[0]
+    cdef long samples = len(userids), i, liked_index, disliked_index, correct = 0, skipped = 0
+    cdef integral j, liked_id, disliked_id, thread_id
+    cdef floating z, score, temp
+
+    cdef floating * user
+    cdef floating * liked
+    cdef floating * disliked
+
+    cdef integral factors = X.shape[1] - 1
+
+    with nogil, parallel(num_threads=num_threads):
+
+        thread_id = get_thread_num()
+        for i in prange(samples, schedule='guided'):
+            liked_index = rng.generate(thread_id)
+            liked_id = itemids[liked_index]
+
+            # if the user has liked the item, skip this for now
+            disliked_index = rng.generate(thread_id)
+            disliked_id = itemids[disliked_index]
+
+            if verify_neg and has_non_zero(indptr, itemids, userids[liked_index], disliked_id):
+                skipped += 1
+                continue
+
+            # get pointers to the relevant factors
+            user, liked, disliked = &X[userids[liked_index], 0], &Y[liked_id, 0], &Y[disliked_id, 0]
+
+            # compute the score
+            score = 0
+            for j in range(factors + 1):
+                score = score + user[j] * (liked[j] - disliked[j])
+            z = 1.0 / (1.0 + exp(score))
+
+            if z < .5:
+                correct += 1
+
+            # update the factors via sgd.
+            for j in range(factors):
+                temp = user[j]
+                user[j] += learning_rate * (z * (liked[j] - disliked[j]) - reg * user[j])
+                liked[j] += learning_rate * (z * temp - reg * liked[j])
+                disliked[j] += learning_rate * (-z * temp - reg * disliked[j])
+
+            # update item bias terms (last column of factorized matrix)
+            liked[factors] += learning_rate * (z - reg * liked[factors])
+            disliked[factors] += learning_rate * (-z - reg * disliked[factors])
+
+    return correct, skipped
+
+@cython.cdivision(True)
+@cython.boundscheck(False)
+def bpr_update_neg(RNGVector rng,
                integral[:] userids, integral[:] itemids, integral[:] indptr,
                floating[:, :] X, floating[:, :] Y,
                float learning_rate, float reg, int num_threads,
