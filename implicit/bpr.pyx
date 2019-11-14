@@ -298,10 +298,11 @@ def bpr_update(RNGVector rng,
 @cython.cdivision(True)
 @cython.boundscheck(False)
 def bpr_update_neg(RNGVector rng,
-               integral[:] userids, integral[:] itemids, integral[:] indptr,
-               floating[:, :] X, floating[:, :] Y,
-               float learning_rate, float reg, int num_threads,
-               bool verify_neg):
+                   integral[:] userids, integral[:] itemids, integral[:] indptr,
+                   floating[:, :] X, floating[:, :] Y,
+                   float learning_rate, float reg, int num_threads,
+                   bool verify_neg,
+                   integral[:] negids=None, integral[:] neg_indptr=None):
     cdef integral users = X.shape[0], items = Y.shape[0]
     cdef long samples = len(userids), i, liked_index, disliked_index, correct = 0, skipped = 0
     cdef integral j, liked_id, disliked_id, thread_id
@@ -323,8 +324,8 @@ def bpr_update_neg(RNGVector rng,
             # if the user has liked the item, skip this for now
             disliked_index = rng.generate(thread_id)
             disliked_id = itemids[disliked_index]
-
-            if verify_neg and has_non_zero(indptr, itemids, userids[liked_index], disliked_id):
+            
+            if has_non_zero(neg_indptr, negids, userids[liked_index], disliked_id) == 0:
                 skipped += 1
                 continue
 
