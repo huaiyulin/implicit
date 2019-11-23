@@ -156,6 +156,8 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
         # for negative sampling
         if neg_samples != None:
             user_items_neg = neg_samples
+            if user_items_neg.dtype != np.float32:
+                user_items_neg = user_items_neg.astype(np.float32)
             if not user_items_neg.has_sorted_indices:
                 user_items_neg.sort_indices()
             user_counts_neg = np.ediff1d(user_items_neg.indptr)
