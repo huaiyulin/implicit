@@ -119,7 +119,7 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
 
     @cython.cdivision(True)
     @cython.boundscheck(False)
-    def fit(self, item_users, neg_samples=None, show_progress=True):
+    def fit(self, item_users, neg_samples=None, show_progress=True, seed=None):
         """ Factorizes the item_users matrix
 
         Parameters
@@ -132,6 +132,9 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
         show_progress : bool, optional
             Whether to show a progress bar
         """
+        if seed:
+            np.random.seed(seed)
+
         # for now, all we handle is float 32 values
         if item_users.dtype != np.float32:
             item_users = item_users.astype(np.float32)
@@ -186,13 +189,13 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
         with tqdm(total=self.iterations, disable=not show_progress) as progress:
             for epoch in range(self.iterations):
                 if neg_samples == None:
-                    correct, skipped = bpr_update(rng, userids,
+                    correct, skipped, ignored = bpr_update(rng, userids,
                                                   user_items.indices, user_items.indptr,
                                                   self.user_factors, self.item_factors,
                                                   self.learning_rate, self.regularization,
                                                   num_threads, self.verify_negative_samples)
                 else:
-                    correct, skipped = bpr_update_neg(rng, userids,
+                    correct, skipped, ignored = bpr_update_neg(rng, userids,
                                                       user_items.indices, user_items.indptr,
                                                       self.user_factors, self.item_factors,
                                                       self.learning_rate, self.regularization,
@@ -201,7 +204,8 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
                 progress.update(1)
                 total = len(user_items.data)
                 progress.set_postfix({"correct": "%.2f%%" % (100.0 * correct / (total - skipped)),
-                                      "skipped": "%.2f%%" % (100.0 * skipped / total)})
+                                      "skipped": "%.2f%%" % (100.0 * skipped / total),
+                                      "ignored": "%.2f%%" % (100.0 * ignored / (total - skipped))})
 
     def _fit_gpu(self, user_items, userids_host, show_progress=True):
         if not implicit.cuda.HAS_CUDA:
@@ -245,7 +249,7 @@ def bpr_update(RNGVector rng,
                float learning_rate, float reg, int num_threads,
                bool verify_neg):
     cdef integral users = X.shape[0], items = Y.shape[0]
-    cdef long samples = len(userids), i, liked_index, disliked_index, correct = 0, skipped = 0
+    cdef long samples = len(userids), i, liked_index, disliked_index, correct = 0, skipped = 0, ignored = 0
     cdef integral j, liked_id, disliked_id, thread_id
     cdef floating z, score, temp
 
@@ -293,7 +297,7 @@ def bpr_update(RNGVector rng,
             liked[factors] += learning_rate * (z - reg * liked[factors])
             disliked[factors] += learning_rate * (-z - reg * disliked[factors])
 
-    return correct, skipped
+    return correct, skipped, ignored
 
 @cython.cdivision(True)
 @cython.boundscheck(False)
@@ -304,7 +308,7 @@ def bpr_update_neg(RNGVector rng,
                    bool verify_neg,
                    integral[:] negids=None, integral[:] neg_indptr=None):
     cdef integral users = X.shape[0], items = Y.shape[0]
-    cdef long samples = len(userids), i, liked_index, disliked_index, correct = 0, skipped = 0
+    cdef long samples = len(userids), i, liked_index, disliked_index, correct = 0, skipped = 0, ignored = 0
     cdef integral j, liked_id, disliked_id, thread_id
     cdef floating z, score, temp
 
@@ -329,6 +333,12 @@ def bpr_update_neg(RNGVector rng,
                 skipped += 1
                 continue
 
+            while has_non_zero(neg_indptr, negids, userids[liked_index], disliked_id) < np.random.rand(1):
+                ignored += 1
+                disliked_index = rng.generate(thread_id)
+                disliked_id = itemids[disliked_index]
+
+
             # get pointers to the relevant factors
             user, liked, disliked = &X[userids[liked_index], 0], &Y[liked_id, 0], &Y[disliked_id, 0]
 
@@ -352,4 +362,4 @@ def bpr_update_neg(RNGVector rng,
             liked[factors] += learning_rate * (z - reg * liked[factors])
             disliked[factors] += learning_rate * (-z - reg * disliked[factors])
 
-    return correct, skipped
+    return correct, skipped, ignored
