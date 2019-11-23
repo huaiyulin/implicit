@@ -153,6 +153,15 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
         user_counts = np.ediff1d(user_items.indptr)
         userids = np.repeat(np.arange(users), user_counts).astype(user_items.indices.dtype)
 
+        # for negative sampling
+        if neg_samples != None:
+            user_items_neg = neg_samples
+            if not user_items_neg.has_sorted_indices:
+                user_items_neg.sort_indices()
+            user_counts_neg = np.ediff1d(user_items_neg.indptr)
+            userids_neg = np.repeat(np.arange(users), user_counts_neg).astype(user_items_neg.indices.dtype)
+            itemids_neg_score = user_items_neg.data
+
         # create factors if not already created.
         # Note: the final dimension is for the item bias term - which is set to a 1 for all users
         # this simplifies interfacing with approximate nearest neighbours libraries etc
@@ -188,19 +197,28 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
         log.debug("Running %i BPR training epochs", self.iterations)
         with tqdm(total=self.iterations, disable=not show_progress) as progress:
             for epoch in range(self.iterations):
-                if neg_samples == None:
+                if neg_samples is None:
                     correct, skipped, ignored = bpr_update(rng, userids,
                                                   user_items.indices, user_items.indptr,
                                                   self.user_factors, self.item_factors,
                                                   self.learning_rate, self.regularization,
                                                   num_threads, self.verify_negative_samples)
                 else:
+                    # correct, skipped = bpr_update_neg(rng, userids,
+                    #                                   user_items.indices, user_items.indptr,
+                    #                                   self.user_factors, self.item_factors,
+                    #                                   self.learning_rate, self.regularization,
+                    #                                   num_threads, self.verify_negative_samples,
+                    #                                   neg_samples.indices, neg_samples.indptr)
+
                     correct, skipped, ignored = bpr_update_neg(rng, userids,
                                                       user_items.indices, user_items.indptr,
                                                       self.user_factors, self.item_factors,
                                                       self.learning_rate, self.regularization,
                                                       num_threads, self.verify_negative_samples,
-                                                      neg_samples.indices, neg_samples.indptr)
+                                                      user_items_neg.indices, user_items_neg.indptr,
+                                                      user_items_neg.toarray(),
+                                                      userids_neg, itemids_neg_score)
                 progress.update(1)
                 total = len(user_items.data)
                 progress.set_postfix({"correct": "%.2f%%" % (100.0 * correct / (total - skipped)),
@@ -306,7 +324,10 @@ def bpr_update_neg(RNGVector rng,
                    floating[:, :] X, floating[:, :] Y,
                    float learning_rate, float reg, int num_threads,
                    bool verify_neg,
-                   integral[:] negids=None, integral[:] neg_indptr=None):
+                   integral[:] itemids_neg=None, integral[:] neg_indptr=None,
+                   floating[:,:] user_items_neg=None,
+                   integral[:] userids_neg=None, floating[:] itemids_neg_score=None):
+
     cdef integral users = X.shape[0], items = Y.shape[0]
     cdef long samples = len(userids), i, liked_index, disliked_index, correct = 0, skipped = 0, ignored = 0
     cdef integral j, liked_id, disliked_id, thread_id
@@ -329,15 +350,14 @@ def bpr_update_neg(RNGVector rng,
             disliked_index = rng.generate(thread_id)
             disliked_id = itemids[disliked_index]
             
-            if has_non_zero(neg_indptr, negids, userids[liked_index], disliked_id) == 0:
+            if has_non_zero(neg_indptr, itemids_neg, userids[liked_index], disliked_id) == 0:
                 skipped += 1
                 continue
 
-            while has_non_zero(neg_indptr, negids, userids[liked_index], disliked_id) < np.random.rand(1):
+            while user_items_neg[userids[liked_index]][disliked_id] < np.random.rand(1):
                 ignored += 1
                 disliked_index = rng.generate(thread_id)
                 disliked_id = itemids[disliked_index]
-
 
             # get pointers to the relevant factors
             user, liked, disliked = &X[userids[liked_index], 0], &Y[liked_id, 0], &Y[disliked_id, 0]
