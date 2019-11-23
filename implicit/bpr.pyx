@@ -330,7 +330,7 @@ def bpr_update_neg(RNGVector rng,
 
     cdef integral users = X.shape[0], items = Y.shape[0]
     cdef long samples = len(userids), i, liked_index, disliked_index, correct = 0, skipped = 0, ignored = 0
-    cdef integral j, liked_id, disliked_id, thread_id
+    cdef integral j, liked_id, disliked_id, thread_id, random_score
     cdef floating z, score, temp
 
     cdef floating * user
@@ -349,15 +349,17 @@ def bpr_update_neg(RNGVector rng,
             # if the user has liked the item, skip this for now
             disliked_index = rng.generate(thread_id)
             disliked_id = itemids[disliked_index]
+            random_score  = rng.generate(thread_id)
             
             if has_non_zero(neg_indptr, itemids_neg, userids[liked_index], disliked_id) == 0:
                 skipped += 1
                 continue
 
-            while user_items_neg[userids[liked_index]][disliked_id] < np.random.rand(1):
+            while (user_items_neg[userids[liked_index]][disliked_id])*len(userids) < random_score:
                 ignored += 1
                 disliked_index = rng.generate(thread_id)
                 disliked_id = itemids[disliked_index]
+                random_score  = rng.generate(thread_id)
 
             # get pointers to the relevant factors
             user, liked, disliked = &X[userids[liked_index], 0], &Y[liked_id, 0], &Y[disliked_id, 0]
