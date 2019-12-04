@@ -132,8 +132,6 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
         show_progress : bool, optional
             Whether to show a progress bar
         """
-        if seed:
-            np.random.seed(seed)
 
         # for now, all we handle is float 32 values
         if item_users.dtype != np.float32:
@@ -167,6 +165,9 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
         # create factors if not already created.
         # Note: the final dimension is for the item bias term - which is set to a 1 for all users
         # this simplifies interfacing with approximate nearest neighbours libraries etc
+        if seed:
+            np.random.seed(seed)
+            
         if self.item_factors is None:
             self.item_factors = (np.random.rand(items, self.factors + 1).astype(self.dtype) - .5)
             self.item_factors /= self.factors
