@@ -93,7 +93,7 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
 
         check_blas_config()
 
-    def fit(self, item_users, show_progress=True):
+    def fit(self, item_users, show_progress=True, seed=None):
         """ Factorizes the item_users matrix.
 
         After calling this method, the members 'user_factors' and 'item_factors' will be
@@ -116,6 +116,13 @@ class AlternatingLeastSquares(MatrixFactorizationBase):
         show_progress : bool, optional
             Whether to show a progress bar during fitting
         """
+        if seed:
+            np.random.seed(seed)
+        else:
+            seed = np.random.randint(1000)
+
+        print(f'seed is {seed}')
+
         Ciu = item_users
         if not isinstance(Ciu, scipy.sparse.csr_matrix):
             s = time.time()
