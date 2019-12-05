@@ -51,8 +51,9 @@ cdef class RNGVector(object):
     cdef vector[mt19937] rng
     cdef vector[uniform_int_distribution[long]]  dist
 
-    def __init__(self, int num_threads, long rows):
+    def __init__(self, int num_threads, long rows, int seed):
         for i in range(num_threads):
+            np.random.seed(seed+i)
             self.rng.push_back(mt19937(np.random.randint(2**31)))
             self.dist.push_back(uniform_int_distribution[long](0, rows))
 
@@ -132,7 +133,11 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
         show_progress : bool, optional
             Whether to show a progress bar
         """
-
+        if seed:
+            np.random.seed(seed)
+        else:
+            seed = np.random.randint(1000)
+        print(f'seed is {seed}')
         # for now, all we handle is float 32 values
         if item_users.dtype != np.float32:
             item_users = item_users.astype(np.float32)
@@ -165,8 +170,7 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
         # create factors if not already created.
         # Note: the final dimension is for the item bias term - which is set to a 1 for all users
         # this simplifies interfacing with approximate nearest neighbours libraries etc
-        if seed:
-            np.random.seed(seed)
+
             
         if self.item_factors is None:
             self.item_factors = (np.random.rand(items, self.factors + 1).astype(self.dtype) - .5)
@@ -196,7 +200,7 @@ class BayesianPersonalizedRanking(MatrixFactorizationBase):
             num_threads = multiprocessing.cpu_count()
 
         # initialize RNG's, one per thread.
-        cdef RNGVector rng = RNGVector(num_threads, len(user_items.data) - 1)
+        cdef RNGVector rng = RNGVector(num_threads, len(user_items.data) - 1, seed)
         log.debug("Running %i BPR training epochs", self.iterations)
         with tqdm(total=self.iterations, disable=not show_progress) as progress:
             for epoch in range(self.iterations):
